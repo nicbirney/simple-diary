@@ -1,10 +1,23 @@
-use sqlite::{Connection, State, open};
+use directories::BaseDirs;
 use std::io::{Read, Write, stdin, stdout};
 
 fn main() {
     let stdin = stdin();
     let mut stdout = stdout();
     let mut buf = String::new();
+
+    let connection: sqlite::Connection;
+
+    if let Some(base_dirs) = BaseDirs::new() {
+        let diary_path = base_dirs.data_dir().join("simple-diary.db");
+        connection = sqlite::open(diary_path).expect("unable to open database");
+    } else {
+        println!("Unable to determine user's home directory. Using same location as executable.");
+        connection = sqlite::open("diary_entries.db").expect("unable to open database");
+    }
+
+    let query = "CREATE TABLE IF NOT EXISTS diary_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, datetime TEXT, feeling_quant INTEGER, feeling_word TEXT, freeform_text TEXT)";
+    connection.execute(query).expect("unable to execute query");
 
     let mut feeling_quant: u8 = 0;
 
