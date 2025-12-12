@@ -40,7 +40,6 @@ fn main() {
         buf.clear();
     }
 
-    println!("\nYou rated: {}\n", feeling_quant.to_string());
 
     let mut buf = String::new();
 
@@ -65,12 +64,9 @@ fn main() {
         buf.clear();
     }
 
-    println!("\nYou feel: {}\n", feeling_word);
-
-    println!("Below, write your thoughts:");
-
     let mut buf = String::new();
     let mut freeform_text = String::new();
+    println!("Enter your thoughts below:\n");
     stdin.read_line(&mut buf).expect("unable to read line");
 
     while !buf.trim().is_empty() {
@@ -85,11 +81,6 @@ fn main() {
         }
     }
 
-    println!("Entry Below:\n{}", freeform_text.trim());
-
-    let connection = sqlite::open("diary_entries.db").expect("unable to open database");
-    let query = "CREATE TABLE IF NOT EXISTS diary_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, datetime TEXT, feeling_quant INTEGER, feeling_word TEXT, freeform_text TEXT)";
-    connection.execute(query).expect("unable to execute query");
 
     let query = "INSERT INTO diary_entries (datetime, feeling_quant, feeling_word, freeform_text) VALUES (datetime('now'), ?, ?, ?)";
     let mut statement = connection
@@ -106,4 +97,6 @@ fn main() {
         .expect("unable to bind parameter");
 
     statement.next().expect("unable to execute statement");
+
+    println!("Entry Saved.")
 }
