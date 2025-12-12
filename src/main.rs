@@ -1,5 +1,5 @@
 use directories::BaseDirs;
-use std::io::{Read, Write, stdin, stdout};
+use std::io::{Write, stdin, stdout};
 
 fn main() {
     let stdin = stdin();
@@ -40,7 +40,6 @@ fn main() {
         buf.clear();
     }
 
-
     let mut buf = String::new();
 
     let mut feeling_word = String::new();
@@ -80,7 +79,6 @@ fn main() {
             stdin.read_line(&mut buf).expect("unable to read line");
         }
     }
-
 
     let query = "INSERT INTO diary_entries (datetime, feeling_quant, feeling_word, freeform_text) VALUES (datetime('now'), ?, ?, ?)";
     let mut statement = connection
