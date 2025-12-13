@@ -14,8 +14,6 @@ fn main() {
 
     let settings: HashMap<String, String> = get_settings();
 
-    println!("{:?}", settings);
-
     let db_name = if let Some(db_name_setting) = settings.get("db_name") {
         db_name_setting.clone()
     } else {
