@@ -86,6 +86,8 @@ fn main() {
         }
     }
 
+    freeform_text = freeform_text.trim().to_string();
+
     let query = "INSERT INTO diary_entries (datetime, feeling_quant, feeling_word, freeform_text) VALUES (datetime('now'), ?, ?, ?)";
     let mut statement = connection
         .prepare(query)
