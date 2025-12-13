@@ -108,7 +108,7 @@ fn main() {
 }
 
 fn connect_to_database(diary_path: &str) -> sqlite::Connection {
-    println!("{}", diary_path);
+    println!("Connecting to database at {}", diary_path);
     sqlite::open(diary_path).expect("unable to open database")
 }
 
