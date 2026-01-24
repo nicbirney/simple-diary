@@ -165,7 +165,6 @@ mod tests {
     use sqlite::State;
     use std::fs::File;
     use std::fs::remove_file;
-    use std::io::prelude;
 
     #[test]
     fn test_local_settings_file() {
