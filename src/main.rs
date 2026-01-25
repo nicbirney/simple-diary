@@ -281,7 +281,6 @@ impl App {
                                 MenuAction::Exit => {
                                     self.should_exit = true;
                                 }
-                                _ => {}
                             }
                         }
                     }
