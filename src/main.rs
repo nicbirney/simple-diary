@@ -6,7 +6,7 @@ use std::error::Error;
 use std::io::{Write, stdin, stdout};
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -253,6 +253,15 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
+        if key.kind != KeyEventKind::Press {
+            return; // this is for compatibility in windows. prevents "double exit"
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            self.should_exit = true;
+            return;
+        }
+
         if key.code == KeyCode::Char('q') {
             self.should_exit = true;
         } else {
