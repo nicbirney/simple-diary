@@ -1,11 +1,38 @@
+use color_eyre::eyre::Result;
 use config::Config;
 use directories::BaseDirs;
 use std::collections::HashMap;
+use std::error::Error;
 use std::io::{Write, stdin, stdout};
+use std::time::Duration;
+
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
+use ratatui::{
+    DefaultTerminal, Frame,
+    buffer::Buffer,
+    layout::Rect,
+    style::{
+        Stylize,
+        palette::tailwind::{BLUE, GREEN, SLATE},
+    },
+    symbols::border,
+    text::{Line, Text},
+    widgets::{Block, Borders, List, ListState, Paragraph, Widget},
+};
+
+use ratatui::prelude::*;
+
+use std::io;
+
+const TICK_RATE_MILLIS: u64 = 250;
 
 const DEFAULT_DB_NAME: &'static str = "diary_entries.db";
+const DEFAULT_TUI_FLAG: bool = false;
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     let stdin: std::io::Stdin = stdin();
     let mut stdout: std::io::Stdout = stdout();
     let mut buf: String = String::new();
@@ -24,6 +51,22 @@ fn main() {
 
     let query = "CREATE TABLE IF NOT EXISTS diary_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, datetime TEXT, feeling_quant INTEGER, feeling_word TEXT, freeform_text TEXT)";
     connection.execute(query).expect("unable to execute query");
+
+    if let Some(tui_flag_setting) = settings.get("TUI_FLAG") {
+        if tui_flag_setting == "true" {
+            color_eyre::install()?;
+
+            let mut terminal = ratatui::init();
+
+            let mut app = App::new();
+            app.diary_path = db_name.clone();
+
+            let app_result = app.run(&mut terminal);
+            ratatui::restore();
+
+            return app_result;
+        }
+    }
 
     let mut feeling_quant: u8 = 0;
 
@@ -104,7 +147,216 @@ fn main() {
 
     statement.next().expect("unable to execute statement");
 
-    println!("Entry Saved.")
+    println!("Entry Saved.");
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MenuAction {
+    NewEntry,
+    EntryExplorer,
+    Exit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MainMenuOption {
+    pub label: String,
+    pub action: MenuAction,
+}
+
+impl MainMenuOption {
+    pub fn new(label: &str, action: MenuAction) -> MainMenuOption {
+        MainMenuOption {
+            label: String::from(label),
+            action,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MainMenu {
+    options: Vec<MainMenuOption>,
+    title: String,
+    state: ListState,
+}
+
+impl MainMenu {
+    pub fn new(title: &str, options: Vec<MainMenuOption>) -> MainMenu {
+        let mut state = ListState::default();
+        if !options.is_empty() {
+            state.select_first();
+        }
+        MainMenu {
+            options,
+            title: title.to_string(),
+            state: state,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CurrentScreen {
+    Main(MainMenu),
+    NewEntry,
+    EntryExplorer,
+}
+
+pub struct App {
+    pub current_screen: CurrentScreen,
+    pub diary_path: String,
+    pub date_time: String,
+    pub feeling_quant: u8,
+    pub feeling_word: String,
+    pub freeform_text: String,
+    pub should_exit: bool,
+    pub header_text: String,
+    pub footer_text: String,
+}
+
+impl App {
+    const TICK_RATE: Duration = Duration::from_millis(TICK_RATE_MILLIS);
+    const HEADER_LENGTH: u16 = 1;
+    const FOOTER_LENGTH: u16 = 1;
+
+    pub fn new() -> App {
+        let main_menu_options = vec![
+            MainMenuOption::new("New Entry", MenuAction::NewEntry),
+            MainMenuOption::new("Entry Explorer", MenuAction::EntryExplorer),
+            MainMenuOption::new("Exit", MenuAction::Exit),
+        ];
+
+        App {
+            current_screen: CurrentScreen::Main(MainMenu::new("Simple Diary", main_menu_options)),
+            diary_path: String::new(),
+            date_time: String::new(),
+            feeling_quant: 0,
+            feeling_word: String::new(),
+            freeform_text: String::new(),
+            should_exit: false,
+            header_text: String::new(),
+            footer_text: String::new(),
+        }
+    }
+
+    fn run(mut self, terminal: &mut DefaultTerminal) -> Result<(), Box<dyn Error>> {
+        self.header_text = String::from("Simple Diary");
+        self.footer_text = format!("Connected to database at: {}", self.diary_path);
+
+        while !self.should_exit {
+            terminal.draw(|frame| self.draw(frame))?;
+            if let Event::Key(key) = event::read()? {
+                self.handle_key(key);
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::Char('q') {
+            self.should_exit = true;
+        } else {
+            match &mut self.current_screen {
+                CurrentScreen::Main(menu) => match key.code {
+                    KeyCode::Down => menu.state.select_next(),
+                    KeyCode::Up => menu.state.select_previous(),
+                    KeyCode::Enter => {
+                        if let Some(option_index) = menu.state.selected() {
+                            match menu.options[option_index].action {
+                                MenuAction::NewEntry => {
+                                    self.current_screen = CurrentScreen::NewEntry
+                                }
+                                MenuAction::EntryExplorer => {
+                                    self.current_screen = CurrentScreen::EntryExplorer
+                                }
+                                MenuAction::Exit => {
+                                    self.should_exit = true;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+                CurrentScreen::NewEntry => {}
+                CurrentScreen::EntryExplorer => {}
+            }
+        }
+    }
+
+    fn create_header_layout(frame: &mut Frame) -> (Rect, Rect) {
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(vec![
+                Constraint::Length(App::HEADER_LENGTH),
+                Constraint::Fill(1),
+            ])
+            .split(frame.area());
+
+        (layout[0], layout[1])
+    }
+
+    fn render_header(&self, header: Rect, frame: &mut Frame) {
+        frame.render_widget(
+            Paragraph::new(&self.header_text[..])
+                .block(Block::new().borders(Borders::NONE))
+                .centered(),
+            header,
+        )
+    }
+
+    fn create_footer_layout(area: Rect) -> (Rect, Rect) {
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(vec![
+                Constraint::Fill(1),
+                Constraint::Length(App::FOOTER_LENGTH),
+            ])
+            .split(area);
+
+        (layout[0], layout[1])
+    }
+
+    fn render_footer(&self, footer: Rect, frame: &mut Frame) {
+        frame.render_widget(
+            Paragraph::new(&self.footer_text[..])
+                .block(Block::new().borders(Borders::NONE))
+                .centered(),
+            footer,
+        )
+    }
+
+    fn draw(&mut self, frame: &mut Frame) {
+        let (header, content) = App::create_header_layout(frame);
+        let (content, footer) = App::create_footer_layout(content);
+
+        self.render_header(header, frame);
+        self.render_footer(footer, frame);
+
+        match &mut self.current_screen {
+            CurrentScreen::Main(menu) => {
+                let layout = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints(vec![
+                        Constraint::Fill(1),
+                        Constraint::Length(6),
+                        Constraint::Fill(6),
+                    ])
+                    .split(content);
+
+                frame.render_stateful_widget(
+                    List::new(menu.options.iter().map(|option| option.label.as_str()))
+                        .block(Block::new().borders(Borders::TOP | Borders::BOTTOM))
+                        .highlight_style(Style::default().fg(Color::Yellow))
+                        .highlight_symbol(">> "),
+                    layout[1].centered_horizontally(Constraint::Length(30)),
+                    &mut menu.state,
+                );
+            }
+            CurrentScreen::NewEntry => {}
+            CurrentScreen::EntryExplorer => {}
+        }
+    }
 }
 
 fn connect_to_database(diary_path: &str) -> sqlite::Connection {
@@ -145,12 +397,14 @@ fn get_settings() -> HashMap<String, String> {
     config_dir_toml = config_dir_toml.required(false);
 
     let config_builder = Config::builder()
-        .add_source(local_settings_toml)
-        .add_source(config_dir_toml);
+        .add_source(config_dir_toml)
+        .add_source(local_settings_toml);
 
     let config_builder = config_builder
         .set_default("db_name", get_default_db_path())
-        .expect("couldn't set default db path");
+        .expect("couldn't set default db path")
+        .set_default("TUI_FLAG", DEFAULT_TUI_FLAG)
+        .expect("couldn't set default TUI flag");
 
     let settings = config_builder.build().expect("Couldn't build settings");
 
