@@ -20,7 +20,10 @@ use ratatui::{
     },
     symbols::border,
     text::{Line, Text},
-    widgets::{Block, Borders, List, ListState, Paragraph, Widget},
+    widgets::{
+        Block, Borders, List, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Widget, Wrap,
+    },
 };
 
 use ratatui::prelude::*;
@@ -196,9 +199,149 @@ impl MainMenu {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryContent {
+    pub content: String,
+    pub character_index: usize,
+    pub vertical_scroll_state: ScrollbarState,
+    pub vertical_scroll: usize,
+    pub cursor_position: Position,
+}
+
+impl EntryContent {
+    pub fn new() -> EntryContent {
+        EntryContent {
+            content: String::new(),
+            character_index: 0,
+            vertical_scroll_state: ScrollbarState::default(),
+            vertical_scroll: 0,
+            cursor_position: Position::default(),
+        }
+    }
+
+    pub fn move_cursor_right(&mut self) {
+        let cursor_moved_right = self.cursor_position.x.saturating_add(1);
+        self.cursor_position.x = self.clamp_cursor(cursor_moved_right.into()) as u16;
+
+        let line_length = self
+            .content
+            .lines()
+            .nth(self.cursor_position.y as usize)
+            .unwrap_or("")
+            .len();
+
+        if self.cursor_position.x > line_length as u16 {
+            self.cursor_position.x = line_length as u16;
+        }
+    }
+
+    pub fn move_cursor_left(&mut self) {
+        let cursor_moved_left = self.cursor_position.x.saturating_sub(1);
+        self.cursor_position.x = self.clamp_cursor(cursor_moved_left.into()) as u16;
+
+        let line_length = self
+            .content
+            .lines()
+            .nth(self.cursor_position.y as usize)
+            .unwrap_or("")
+            .len();
+
+        if self.cursor_position.x > line_length as u16 {
+            self.cursor_position.x = line_length as u16;
+        }
+    }
+
+    pub fn move_cursor_up(&mut self) {
+        let cursor_moved_up = self.cursor_position.y.saturating_sub(1);
+        self.cursor_position.y = self.clamp_cursor(cursor_moved_up.into()) as u16;
+
+        let line_length = self
+            .content
+            .lines()
+            .nth(self.cursor_position.y as usize)
+            .unwrap_or("")
+            .len();
+
+        if self.cursor_position.x > line_length as u16 {
+            self.cursor_position.x = line_length as u16;
+        }
+    }
+
+    pub fn move_cursor_down(&mut self) {
+        let cursor_moved_down = self.cursor_position.y.saturating_add(1);
+        self.cursor_position.y = self.clamp_cursor(cursor_moved_down.into()) as u16;
+
+        let line_length = self
+            .content
+            .lines()
+            .nth(self.cursor_position.y as usize)
+            .unwrap_or("")
+            .len();
+
+        if self.cursor_position.x > line_length as u16 {
+            self.cursor_position.x = line_length as u16;
+        }
+    }
+
+    pub fn enter_char(&mut self, new_char: char) {
+        let index = self.byte_index();
+
+        self.content.insert(index, new_char);
+        self.move_cursor_right();
+    }
+
+    pub fn reset_cursor(&mut self) {
+        self.cursor_position.x = 0;
+    }
+
+    pub fn byte_index(&self) -> usize {
+        let mut prev_lines_bytes: usize = 0;
+
+        //Currently this will be a problem if you're using /r/n newline mode.
+        // TODO: HANDLE \r\n as well as just \n
+        if self.cursor_position.y > 0 {
+            prev_lines_bytes = self
+                .content
+                .lines()
+                .take((self.cursor_position.y) as usize)
+                .map(|line| line.len() + 1) //the +1 is for the newline, which isn't included in lines()
+                .sum();
+        }
+
+        self.content
+            .char_indices()
+            .map(|(i, _)| i)
+            .nth(prev_lines_bytes + self.cursor_position.x as usize)
+            .unwrap_or(self.content.len())
+    }
+
+    pub fn clamp_cursor(&self, new_cursor_pos: usize) -> usize {
+        new_cursor_pos.clamp(0, self.content.len())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    title: String,
+    freeform_text: EntryContent,
+    date: String,
+    feeling_quant: EntryContent,
+}
+
+impl Entry {
+    pub fn new() -> Entry {
+        Entry {
+            title: String::new(),
+            freeform_text: EntryContent::new(),
+            date: String::new(),
+            feeling_quant: EntryContent::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CurrentScreen {
     Main(MainMenu),
-    NewEntry,
+    NewEntry(Entry),
     EntryExplorer,
 }
 
@@ -260,10 +403,6 @@ impl App {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.should_exit = true;
             return;
-        }
-
-        if key.code == KeyCode::Char('q') {
-            self.should_exit = true;
         } else {
             match &mut self.current_screen {
                 CurrentScreen::Main(menu) => match key.code {
@@ -273,7 +412,13 @@ impl App {
                         if let Some(option_index) = menu.state.selected() {
                             match menu.options[option_index].action {
                                 MenuAction::NewEntry => {
-                                    self.current_screen = CurrentScreen::NewEntry
+                                    let new_entry = Entry {
+                                        title: String::new(),
+                                        freeform_text: EntryContent::new(),
+                                        date: String::new(),
+                                        feeling_quant: EntryContent::new(),
+                                    };
+                                    self.current_screen = CurrentScreen::NewEntry(new_entry)
                                 }
                                 MenuAction::EntryExplorer => {
                                     self.current_screen = CurrentScreen::EntryExplorer
@@ -286,7 +431,38 @@ impl App {
                     }
                     _ => {}
                 },
-                CurrentScreen::NewEntry => {}
+                CurrentScreen::NewEntry(new_entry) => match key.code {
+                    KeyCode::Enter => {
+                        new_entry.freeform_text.enter_char('\n');
+                        new_entry.freeform_text.reset_cursor();
+                        new_entry.freeform_text.move_cursor_down();
+                    }
+                    KeyCode::Down => {
+                        if new_entry.freeform_text.cursor_position.y
+                            < new_entry
+                                .freeform_text
+                                .content
+                                .lines()
+                                .count()
+                                .saturating_sub(1) as u16
+                        {
+                            new_entry.freeform_text.move_cursor_down();
+                        }
+                    }
+                    KeyCode::Up => {
+                        if new_entry.freeform_text.cursor_position.y > 0 {
+                            new_entry.freeform_text.move_cursor_up();
+                        }
+                    }
+                    KeyCode::Left => {
+                        new_entry.freeform_text.move_cursor_left();
+                    }
+                    KeyCode::Right => {
+                        new_entry.freeform_text.move_cursor_right();
+                    }
+                    KeyCode::Char(to_insert) => new_entry.freeform_text.enter_char(to_insert),
+                    _ => {}
+                },
                 CurrentScreen::EntryExplorer => {}
             }
         }
@@ -361,7 +537,55 @@ impl App {
                     &mut menu.state,
                 );
             }
-            CurrentScreen::NewEntry => {}
+            CurrentScreen::NewEntry(entry) => {
+                let layout = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints(vec![Constraint::Length(3), Constraint::Fill(1)])
+                    .split(content);
+
+                frame.render_widget(
+                    Paragraph::new(entry.feeling_quant.content.clone())
+                        .block(Block::new().borders(Borders::ALL)),
+                    layout[0],
+                );
+
+                let text_area_height = layout[1].height.saturating_sub(2);
+                let cursor_y = entry.freeform_text.cursor_position.y;
+                let current_scroll = entry.freeform_text.vertical_scroll;
+
+                if cursor_y >= current_scroll as u16 + text_area_height {
+                    entry.freeform_text.vertical_scroll =
+                        (cursor_y + 1).saturating_sub(text_area_height) as usize;
+                } else if cursor_y < current_scroll as u16 {
+                    entry.freeform_text.vertical_scroll = cursor_y as usize;
+                }
+
+                entry.freeform_text.vertical_scroll_state = entry
+                    .freeform_text
+                    .vertical_scroll_state
+                    .content_length(entry.freeform_text.content.lines().count())
+                    .position(entry.freeform_text.vertical_scroll);
+
+                let paragraph = Paragraph::new(entry.freeform_text.content.clone())
+                    .block(Block::new().borders(Borders::ALL))
+                    .scroll((entry.freeform_text.vertical_scroll as u16, 0));
+
+                frame.render_widget(paragraph, layout[1]);
+
+                frame.render_stateful_widget(
+                    Scrollbar::new(ScrollbarOrientation::VerticalRight),
+                    layout[1],
+                    &mut entry.freeform_text.vertical_scroll_state,
+                );
+
+                frame.set_cursor_position(Position::new(
+                    layout[1].x + entry.freeform_text.cursor_position.x as u16 + 1,
+                    layout[1].y
+                        + (entry.freeform_text.cursor_position.y
+                            - entry.freeform_text.vertical_scroll as u16)
+                        + 1,
+                ));
+            }
             CurrentScreen::EntryExplorer => {}
         }
     }
